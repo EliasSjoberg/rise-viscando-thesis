@@ -1,5 +1,5 @@
 # rise-viscando-thesis
-This repository contains supplementary files for the MSc thesis "Generating Synthetic Scenarios to Test an AI-Enabled Traffic Measurement System". The thesis project was done in collaboration between Lund University, RISE Research Institutes of Sweden, and Viscando. The project received financial support from SAFER through the pre-study CP57 - Generating Synthetic Scenarios to Test an Al-Enabled Traffic Measurement System.
+This repository contains supplementary files for the MSc thesis "Generating Synthetic Scenarios to Test an AI-Enabled Traffic Measurement System". The thesis project was done in collaboration between Lund University, RISE Research Institutes of Sweden, and Viscando. The project received financial support from [SAFER](https://www.saferresearch.com/) through the pre-study CP57 - Generating Synthetic Scenarios to Test an Al-Enabled Traffic Measurement System.
 
 The repository contains the following:
 * Map files (for Roadrunner and CARLA) of a digital model of an intersection in Lindholmen, Gothenburg, Sweden.
@@ -11,5 +11,9 @@ Traffic is complex! It is the sum of road design, road user behavior, and their 
 
 Software quality assurance (QA) must evolve as systems increasingly rely on AI. Building on initial work on simulation-based testing, we will develop evolutionary algorithms to generate test scenarios in CARLA that stress OTUS3D to its limits. As part of the project, we will develop a digital model of an intersection in Lindholmen. The project's results will support development of robust traffic measurement systems for smart city and autonomous driving applications.
 
-** Further information
+## Further information
 A link to the complete MSc thesis will be made available.
+* Student: Elias Sjöberg
+* Academic Supervisor: Markus Borg
+* Industry supervisor: Yury Tarakanov
+* Examiner: Per Runeson
