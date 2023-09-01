@@ -1,0 +1,11 @@
+The output (i.e. the estimations) and ground truth are structured in the following way.
+
+There are 3 generations (0-2).
+There are 4 batches (1-4 for the color and weather parameter values and 0-3 for the others).
+* 0 refers to car/walker trajectories using the baseline model.
+* 1 refers to car/walker trajectories using the NSGA-II model.
+* 2 refers to bike/walker trajectories using the baseline model.
+* 3 refers to bike/walker trajectories using the NSGA-II model.
+For each batch, there are 20 simulated scenarios (0-19).
+
+'input_params_genX' in ground_truth contains the rgb values for each car as well as the sun azimuth angle and the cloudiness value.
