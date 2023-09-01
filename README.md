@@ -4,7 +4,11 @@ This repository contains supplementary files for the MSc thesis "Generating Synt
 The repository contains the following:
 * Map files (for Roadrunner and CARLA) of a digital model of an intersection in Lindholmen, Gothenburg, Sweden.
 * Trajectories for vehicles and pedestrians in the digital model.
-* Source code for generation of traffic scenarios (trajectories and environmental conditions) for the digital model using search-based software testing.
+* Source code for generation of traffic scenarios (trajectories and environmental conditions) for the digital model using search-based software testing. This source code is contained in the files simulation_main.py and simulation_methods.py.
+* Resulting estimations made by OTUS3D for each simulated scenario in outputs_viscando.
+* Ground truth values for each simulated scenario in ground_truth.
+* Source code for evaluating the results in evaluate.py and xy_errors.py.
+* Example videos of simulated traffic scenarios.
 
 ## Project description
 Traffic is complex! It is the sum of road design, road user behavior, and their interactions. Understanding this dynamic is central to making the transport system efficient, safe, and sustainable. Viscando offers Al-enabled data-driven solutions for traffic analysis, safety diagnostics, intelligent traffic control, naturalistic data collection, and extended perception at the very core of smart cities and autonomous driving. This is enabled by Viscando's proprietary AI- and stereovision-based infrastructure sensor OTUS3D, which is used for collection of accurate traffic movement data.

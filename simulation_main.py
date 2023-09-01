@@ -3,13 +3,17 @@ import os
 import sys
 import h5py
 import numpy as np
-import carla
+import carla 
 import time
 from queue import Queue
 import array
 import random
 import cv2
 import shutil
+import re
+import csv
+
+
 
 from deap import algorithms
 from deap import base
@@ -28,40 +32,142 @@ try:
 except IndexError:
     pass
 
-def uniform(low, up, size=None):
-    try:
-        return [random.uniform(a, b) for a, b in zip(low, up)]
-    except TypeError:
-        return [random.uniform(a, b) for a, b in zip([low] * size, [up] * size)]
+    
+
+
+def fetch_values(pop_temp):
+    """
+    Method on a form that deaper likes that returns the population
+    """
+    ret_values = pop_temp.pop(0)       
+    return ret_values
+
+def fetch_errors(avg_errors, individual):
+    """
+    Method on a form that deaper likes that returns the errors (fitness values)
+    """
+    return avg_errors.pop(0)
+
+def get_param_values(batch_idx, pop_size, delta_timestamps, current_gen, nbr_actors, gt_path):
+    """
+    Reads the parameter values saved from the last generation and returns them in pop: a list containing the values.
+    The values are ordered so that the starting times come first, then any potential colors and lastly the weather parameters.
+    Thus, pop[0][0] is the starting time for one actor for the first individual, and pop[0][-1] is the cloudiness value for the first individual.
+
+    Args:
+    batch_idx (int): Determines which of the vehicle_tracks/model combination to simulate. Ranges from 0 to 3.
+    pop_size (int): Population size.
+    delta_timestamps (float): "Long frames". The amount of time between capturing of images and also the time between each waypoint in the trajectories.
+    current_gen (int): The current generation.
+    nbr_actors (int): The number of actors (cars, bikes, walkers) participating in the simulation.
+    gt_path (str): Path to ground truth values.
+    """
+    #Have assumed fixed speeds
+
+    params_path = gt_path + f'/input_params_gen{current_gen-1}/batch_{batch_idx+1}.txt' #Path to color and weather parameter values
+    ts_path = gt_path + f'/ground_truth_gen{current_gen-1}_{batch_idx}' #Path to ground truth positions, speeds, classifications and timestamp values
+
+    pop = []
+    ts_save = []
+    color_save = []
+    weather_save = []
+
+    for ind_idx in range(pop_size): #We start with fetching the timestamp values
+        temp = [] #List containing the starting timestamps (in "long frames") for each actor in the scenario
+        filegt = open(ts_path + f'/ground_truth_{ind_idx}.csv')
+        csvreadergt = csv.reader(filegt, delimiter=';')
+        headergt = next(csvreadergt)
+        row = next(csvreadergt)
+
+        while True:
+            try:
+                row_id = row[0]
+                temp.append(np.rint((float(row[1])/delta_timestamps)))
+                while row[0] == row_id: #We are only interested in the starting timestamp, so we just skip the rest
+                    row = next(csvreadergt)
+                
+            except StopIteration:
+                break
+        ts_save.append(temp)
+            
+            
+    
+    with open(params_path,'r') as f: #Next we fetch the color and weather values
+        for line in f:
+            color_temp = []
+            weather_temp = []
+            color_match = re.findall("r: \d+   g: \d+   b: \d+", line)
+            for m in color_match:
+                digits = re.findall("\d+", m)
+                color_temp.append(int(digits[0]))
+                color_temp.append(int(digits[1]))
+                color_temp.append(int(digits[2]))
+
+            weather_match = re.findall("az: \d+\.\d+   cl: \d+\.\d+", line)
+            for m in weather_match:
+                nbrs = re.findall("\d+\.\d+", m)
+                for nbr in nbrs:
+                    weather_temp.append(float(nbr))
+
+            color_save.append(color_temp)
+            weather_save.append(weather_temp)
+
+    for ind_idx in range(pop_size):
+        pop.append(ts_save[ind_idx])
+        pop[ind_idx] += color_save[ind_idx]
+        pop[ind_idx] += weather_save[ind_idx]
+
+    return pop
+
+
 
 
 def main():
+    print('Setting up simulator configurations...')
+
+    #Paths:
+    op_path = 'C:/Users/elias/outputs_viscando' #Path to OTUS3D estimations
+    gt_path = 'C:/Users/elias/ground_truth' #Path to ground truth
+    h5FilePath = 'C:/Users/eliassj/Desktop/trajectories/main_trajectories.h5' #Path to the trajectories used
 
     #Parameters for coordinate change
-    print('Setting up simulator configurations...')
     transx = 11 #To change between Viscando coordinates and CARLA coordinates.
-    transy = -9 
+    transy = -9
 
-    model = 'baseline'
-    nbr_generations = 20
-    pop_size = 40 #Should be divisible by 4.
+    model = 'nsga2' #Should be 'nsga2' or 'baseline'. Note that if current_gen == 0, then model cannot be nsga2 
+    current_gen = 3
+    batch_idx = 3 #0-3. Determines which of the vehicle_tracks/model combination to simulate
+    #0 refers to car trajectories and the baseline model, 1 to car trajectories and the NSGA-II model,
+    #2 to bike trajectories and the baseline model and 3 to bike trajectories and the NSGA-II model
+    
+    nbr_generations = 1 #Can only do one generation before sending the results to Viscando so should always be 1
+    pop_size = 20 #Should be divisible by 4 according to instructions from deap.
     crossover_prob = 0.9
     pop = array.array('I',[]) 
    
-    nbr_vel_points = 3 #Number of points in which to vary velocities.
-    vehicle_tracks = np.array([0, 0, 0, 0, 1, 1, 1])
-    walker_tracks = np.array([1,0,1,0,0,1,1])
+    nbr_vel_points = 3 #Number of points in which to vary velocities (only when velocities are set as variable)
+    
+    if batch_idx == 0 or batch_idx == 1:
+        vehicle_tracks = np.array([1, 1, 1, 0, 0, 0, 0]) #Nbr vehicles for each of the seven possible tracks
+        #The ones set to 1 were the car trajectories used in the report
+
+    else:
+        vehicle_tracks = np.array([0, 0, 0, 0, 1, 1, 1]) #The ones set to 1 were the bike trajectories used in the report
+    
+    walker_tracks = np.array([1,0,1,0,0,1,1]) #The ones set to 1 were the walker trajectories used in the report
     static_tracks = np.array([0,0,0,0,0,0,0,0,0,0,0,0,0,0]) #Should have length equal to vehicle_tracks and walker_tracks combined.
-    #Note that we can only have one of each track to be static.
-    delta_timestamps = 0.05
-    delta_seconds = delta_timestamps/3 #Must be 1, 1/2, 1/3 etc of delta_timestamps!
-    v_max = 12 #max speed allowed (m/s)
-    t_max = 10 #max time where creation of actor is allowed.
-    v_max_w = 1.9
-    v_max_b = 6
-    azimuth_min = 25
+    #Static tracks are constant across generations. Note that we can only have one of each track to be static.
+    #No static tracks were used in the report
+    delta_timestamps = 0.05 #"Long frames". The amount of time between capturing of images and also the time between each waypoint in the trajectories.
+    delta_seconds = delta_timestamps/3 #"Short frames". Amount of simulated time per frame. Must be 1, 1/2, 1/3 etc of delta_timestamps!
+
+    t_max = 10 #max time (s) where creation of actor is allowed.
+    v_max = 12 #max speed allowed for cars (m/s) (only when varying velocities)
+    v_max_w = 1.9 #max speed allowed for walkers (m/s)
+    v_max_b = 6 #max speed allowed for bikes (m/s)
+    azimuth_min = 25 #If changed, also needs to be changed in generate_values in simulation_methods.
     azimuth_max = 265 - (azimuth_min - 15)
-    nbr_frames_ts = int(round(t_max/delta_timestamps)) #long frames. Only if we keep timestamps as parameter
+    nbr_frames_ts = int(round(t_max/delta_timestamps)) #Number of "long frames" where creation of actor is allowed.
     nbr_tracks = np.sum(vehicle_tracks)
     nbr_car_tracks = np.sum(vehicle_tracks[:3])
     nbr_bike_tracks = np.sum(vehicle_tracks[3:7])
@@ -69,9 +175,9 @@ def main():
     tracks = np.concatenate((vehicle_tracks,walker_tracks))
     total_nbr_tracks = nbr_tracks + nbr_walker_tracks + np.sum(static_tracks)
 
-    bool_dict = dict() #Which parameters should be dynamic across generations?
-    bool_dict['timestamps'] = True #True means that the parameter is dynamic
-    bool_dict['vels'] = False
+    bool_dict = dict() #Determines which parameters should be variable across generations. True means that the parameter is variable
+    bool_dict['timestamps'] = True
+    bool_dict['vels'] = False #Note: Setting this to True has not been properly tested and might yield unsatisfactory results
     bool_dict['colors'] = True
     bool_dict['clouds'] = True
     bool_dict['precip'] = False
@@ -80,7 +186,7 @@ def main():
     bool_dict['fog'] = False
     bool_dict['wetness'] = False
 
-    weather_dict = { #Default values.
+    weather_dict = { #Default values
         'cloudiness': 40,
         'precipitation': 0,
         'wind_intensity': 15,
@@ -106,6 +212,7 @@ def main():
                      [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]])
     Minvright = np.linalg.inv(Mright)
 
+    #Camera coordinates in the simulation.
     coordsleft = Minvleft[0:3,3]
     coordsright = Minvright[0:3,3]
     coordsleft[0] += transx - 1
@@ -124,6 +231,7 @@ def main():
     rollright = np.arcsin(Minvright[1,0]/np.cos(pitchright))
    
     try:
+        #Set up CARLA
         client = carla.Client('127.0.0.1',2000)
         client.set_timeout(10.0)
         world = client.get_world()
@@ -133,19 +241,16 @@ def main():
         settings.synchronous_mode = True
         settings.fixed_delta_seconds = delta_seconds
         world.apply_settings(settings)
+        
 
-        gen_nbr = 0
-
-
-        #Fetch input data
-        h5FilePath = 'C:/Users/eliassj/Desktop/trajectories/main_trajectories.h5' #Fetching the trajectories.
-        track_dict = dict() #Keeping track of the indices of the tracks.
-        coord_dict = dict()
-        speed_dict = dict()
-        color_dict = dict()
-        starting_timestamps = np.zeros(total_nbr_tracks)
-        object_classes = np.zeros(total_nbr_tracks)
-        start_idx = 0 #How many of the starting frames to remove.
+        #Fetch input data and put into dicts
+        track_dict = dict() #Keeping track of the indices of the trajectories
+        coord_dict = dict() #Positional coordinates of the trajectories
+        speed_dict = dict() #Speed at waypoints in the trajectories
+        color_dict = dict() #Colors of the cars in the simulation
+        starting_timestamps = np.zeros(total_nbr_tracks) #starting times of the actors in the simulation
+        object_classes = np.zeros(total_nbr_tracks) #Keeping track of whether the actor is a car, bicycle or walker
+        start_idx = 0 #How many of the starting frames to remove
         h5File = h5py.File(h5FilePath, 'r')
        
         idx1 = 0
@@ -153,7 +258,7 @@ def main():
        
         while idx1 < len(tracks):
             if tracks[idx1] > 0:
-                #Matrix used in coordinate change:
+                #Matrix used in trajectory coordinate change:
                 theta = h5File['Tracks'][f"{idx1}"]['States']['Theta'][0]
                 transMatrix = np.matrix(np.identity(3))
                 transMatrix[0,2] = transx
@@ -170,14 +275,14 @@ def main():
                 coord_dict[idx2] = coords
                
                 if bool_dict['vels'] == False:
-                    speed_dict[idx2] = h5File['Tracks'][f"{idx1}"]['States']['Velocity_ms'][start_idx:]
+                    speed_dict[idx2] = h5File['Tracks'][f"{idx1}"]['States']['Velocity_ms'][start_idx:] #Default speed values
 
                 if bool_dict['timestamps'] == False:
-                    starting_timestamps[idx2] = h5File['Tracks'][f"{idx1}"]['States']['Timestamps_UNIX'][start_idx]
-
+                    starting_timestamps[idx2] = h5File['Tracks'][f"{idx1}"]['States']['Timestamps_UNIX'][start_idx] #Default timestamps
+                
                 object_classes[idx2] = h5File['Tracks'][f"{idx1}"]['States']['Object_class'][0]
-                if object_classes[idx2] == 18:
-                    color_dict[idx2] = [17,37,103] #Default values.
+                if object_classes[idx2] == 18: #If the actor is a car
+                    color_dict[idx2] = [17,37,103] #Default color values.
 
                 track_dict[idx2] = idx1
                 idx2 += 1
@@ -187,9 +292,9 @@ def main():
 
         
         #Note that there can only be one of each of the static tracks since the timestamps are the same.
-        for idx in range(len(tracks)):
+        for idx in range(len(static_tracks)):
             if static_tracks[idx] > 0:
-                theta = h5File['Tracks'][f"{idx1}"]['States']['Theta'][0]
+                theta = h5File['Tracks'][f"{idx}"]['States']['Theta'][0]
                 transMatrix = np.matrix(np.identity(3))
                 transMatrix[0,2] = transx
                 transMatrix[1,2] = transy
@@ -199,7 +304,7 @@ def main():
                 transMatrix[1,1] = np.cos(np.radians(theta))
                 
                 xs = h5File['Tracks'][f"{idx}"]['States']['X_local_coordinate_system'][start_idx:]
-                ys = h5File['Tracks'][f"{idx}"]['States']['Y_local_coordinate_system'][start_idx:]
+                ys = h5File['Tracks'][f"{idx}"]['States']['Y_local_coordinate_system'][start_idx:]            
                 coords = np.stack((xs,ys,np.ones(len(xs))))
                 coords = np.matmul(transMatrix,coords) #Do coordinate change
                 coord_dict[idx2] = coords
@@ -210,13 +315,12 @@ def main():
 
                 object_classes[idx2] = h5File['Tracks'][f"{idx}"]['States']['Object_class'][0]
                 if object_classes[idx2] == 18:
-                    color_dict[idx2] = [17,37,103] #Default values.
+                    color_dict[idx2] = [17,37,103] #Default color values.
 
                 idx2 += 1
                                    
                
         #Setup RGB camera
-        
         sensor_list = []
         sensor_queue = Queue()
         
@@ -234,7 +338,6 @@ def main():
         cam_rotation_right = carla.Rotation(np.degrees(pitchright)-4,np.degrees(yawright)+7,np.degrees(rollright)-6)
         cam_transform_right = carla.Transform(cam_location_right,cam_rotation_right)
         rgb_cam_right = world.spawn_actor(cam_bp,cam_transform_right)
-
         
         rgb_cam_left.listen(lambda data: sensor_callback(data, sensor_queue, 0))
         rgb_cam_right.listen(lambda data: sensor_callback(data, sensor_queue, 1))
@@ -242,236 +345,192 @@ def main():
         sensor_list.append(rgb_cam_left)
         sensor_list.append(rgb_cam_right)
         
-        world.tick() #Tick to spawn in the cameras.
-
-        starting_frames_ts = np.rint(starting_timestamps/delta_timestamps) #Needs to be in long frames.
-        max_frames = np.zeros(len(tracks), dtype = np.uint32)
-
+        starting_frames_ts = np.rint(starting_timestamps/delta_timestamps) #Starting frames in long frames
+        
+        max_frames = np.zeros(len(tracks), dtype = np.uint32) #The number of waypoints or "long frames" in each trajectory
         for idx in range (len(tracks)):
             xs = h5File['Tracks'][f"{idx}"]['States']['X_local_coordinate_system'][start_idx:]
             max_frames[idx] = len(xs)
 
-        if model == 'nsga2':
+        if model == 'nsga2': #This block is about fetching past values and evaluating so that the nsga-ii algorithm can be used
             nbr_elements = [bool_dict['timestamps']*(nbr_tracks+nbr_walker_tracks),bool_dict['vels']*nbr_car_tracks*nbr_vel_points,
                             bool_dict['vels']*nbr_bike_tracks*nbr_vel_points,bool_dict['vels']*nbr_walker_tracks*nbr_vel_points,
-                            bool_dict['colors']*len(color_dict)*3,bool_dict['clouds'],bool_dict['precip'],bool_dict['wind'],bool_dict['sun_angle'],
+                            bool_dict['colors']*len(color_dict)*3,bool_dict['sun_angle'],bool_dict['clouds'],bool_dict['precip'],bool_dict['wind'],
                             bool_dict['fog'],bool_dict['wetness']]
 
-            BOUND_LOW = [0]*nbr_elements[0] + [0.5]*nbr_elements[1] + [0.5]*nbr_elements[2] + [0.3]*nbr_elements[3] + [0]*nbr_elements[4] + [0]*nbr_elements[5] + \
-                        + [0]*nbr_elements[6] + [0]*nbr_elements[7] [azimuth_min]*nbr_elements[8] + [0]*nbr_elements[9] + [0]*nbr_elements[10]
+            BOUND_LOW = [0]*nbr_elements[0] + [0.5]*nbr_elements[1] + [0.5]*nbr_elements[2] + [0.3]*nbr_elements[3] + [0]*nbr_elements[4] + [azimuth_min]*nbr_elements[5] + \
+                        [0]*nbr_elements[6] + [0]*nbr_elements[7] + [0]*nbr_elements[8] + [0]*nbr_elements[9] + [0]*nbr_elements[10]
 
-            BOUND_UP = [t_max]*nbr_elements[0] + [v_max]*nbr_elements[1] + [v_max_b]*nbr_elements[2] + [v_max_w]*nbr_elements[3] + [255]*nbr_elements[4] + \
-            [100]*nbr_elements[5] + [100]*nbr_elements[6] + [100]*nbr_elements[7] + [azimuth_max]*nbr_elements[8] + [100]*nbr_elements[9] + [100]*nbr_elements[10]
-   
-            #NOTE: There are multiple places to change the lower/upper bounds if they are decided to be changed! Here and in simulation_methods. Be careful!
+            #Lower bounds for variable parameters. Minimum speeds are arbitrarily set to 0.5m/s for cars/bikes and 0.3m/s for walkers.
+            #If any of these lower bounds are changed, they also need to be changed in generate_values in simulation_methods.
+            #The reason is to keep the code simpler.
+            
+            BOUND_UP = [nbr_frames_ts]*nbr_elements[0] + [v_max]*nbr_elements[1] + [v_max_b]*nbr_elements[2] + [v_max_w]*nbr_elements[3] + [255]*nbr_elements[4] + \
+            [azimuth_max]*nbr_elements[5] + [100]*nbr_elements[6] + [100]*nbr_elements[7] + [100]*nbr_elements[8] + [100]*nbr_elements[9] + [100]*nbr_elements[10]        
            
-            creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0)) #Assuming two objectives.
-            creator.create("Individual", array.array, typecode='d', fitness=creator.FitnessMax)
+            creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0, 1.0)) #Assuming three objectives
+            creator.create("Individual", array.array, typecode='d', fitness=creator.FitnessMax) #Create individual
 
             toolbox = base.Toolbox()
 
-            toolbox.register("attr_float", uniform, BOUND_LOW, BOUND_UP) #The registering is done above main in the example.
-            toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.attr_float)
-            toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+            pop_temp = get_param_values(batch_idx, pop_size, delta_timestamps, current_gen, total_nbr_tracks, gt_path) #The population from the last generation
 
-            toolbox.register("evaluate", evaluate())
-            toolbox.register("mate", tools.cxSimulatedBinaryBounded, low=BOUND_LOW, up=BOUND_UP, eta=20.0) #Lower eta to make the child more different from the parent.
+            toolbox.register("attr_float", fetch_values, pop_temp)
+            toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.attr_float)
+            toolbox.register("population", tools.initRepeat, list, toolbox.individual) #Needed in order to have the population on the "correct" form
+            #so that deaper methods can be used.
+
+            (avg_errors, dist_results, speed_results, perc_misclass, step_perc) = compute_errors(batch_idx, total_nbr_tracks, pop_size, current_gen, False, op_path, gt_path)
+            #returns a list containing 20 errors.
+            """
+            #Compute the mean fitness/errors across all individuals in the population
+            mean_fitness_dist = np.zeros(7)
+            mean_fitness_speed = np.zeros(7)
+            mean_fitness_perc = np.zeros(7)
+
+            for idx1 in range(len(dist_results)):
+                mean_fitness_dist += dist_results[idx1]
+                mean_fitness_speed += speed_results[idx1]
+                mean_fitness_perc += perc_misclass[idx1]
+
+            mean_fitness_dist = mean_fitness_dist/len(dist_results)
+            mean_fitness_speed = mean_fitness_speed/len(dist_results)
+            mean_fitness_perc = mean_fitness_perc/len(dist_results)
+
+            print(mean_fitness_dist)
+            print(mean_fitness_speed)
+            print(mean_fitness_perc)
+            print(np.mean(mean_fitness_dist))
+            print(np.mean(mean_fitness_speed))
+            print(np.mean(mean_fitness_perc))
+            """
+
+            toolbox.register("evaluate", fetch_errors, avg_errors)
+            toolbox.register("mate", tools.cxSimulatedBinaryBounded, low=BOUND_LOW, up=BOUND_UP, eta=20.0) #Lower eta makes the child more different from the parent.
             toolbox.register("mutate", tools.mutPolynomialBounded, low=BOUND_LOW, up=BOUND_UP, eta=20.0, indpb=1.0/len(BOUND_LOW))
             toolbox.register("select", tools.selNSGA2)
 
             stats = tools.Statistics(lambda ind: ind.fitness.values)
-            stats.register("avg", numpy.mean, axis=0)
-            stats.register("std", numpy.std, axis=0)
-            stats.register("min", numpy.min, axis=0)
-            stats.register("max", numpy.max, axis=0)
+            stats.register("avg", np.mean, axis=0)
+            stats.register("std", np.std, axis=0)
+            stats.register("min", np.min, axis=0)
+            stats.register("max", np.max, axis=0)
 
             logbook = tools.Logbook()
             logbook.header = "gen", "evals", "std", "min", "avg", "max"
 
-            pop = toolbox.population(n=pop_size)
+            if current_gen == 1:
+                pop = toolbox.population(n=pop_size)
 
-            #Need to run_simulation once for each individual in pop. Set weather in between.
-            for ind in pop:
-                (starting_frames_ts,speed_dict,color_dict,weather_dict) = generate_values(bool_dict, nbr_car_tracks, nbr_bike_tracks, nbr_walker_tracks, nbr_vel_points, v_max, v_max_b, v_max_w, nbr_frames_ts, weather_dict, speed_dict, track_dict, color_dict, starting_frames_ts, max_frames, ind)
-                starting_frames = np.rint(starting_frames_ts*delta_timestamps/delta_seconds) #At what frames to spawn actors.
+                # Evaluate the individuals with an invalid fitness (all individuals at this stage)
+                invalid_ind = [ind for ind in pop if not ind.fitness.valid]
+                fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
+                for ind, fit in zip(invalid_ind, fitnesses):
+                    ind.fitness.values = fit
 
-                weather = set_weather_params(weather_dict)
-               
-                world.set_weather(weather)
+                print("last gen population hypervolume is %f" % hypervolume(pop))
 
-                run_simulation(gen_nbr, total_nbr_tracks, coord_dict, speed_dict, delta_seconds, delta_timestamps, starting_frames, object_classes, color_dict, world, sensor_list, sensor_queue, blueprint_library)
-           
-            # Evaluate the individuals with an invalid fitness
-            invalid_ind = [ind for ind in pop if not ind.fitness.valid]
-            fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
-            for ind, fit in zip(invalid_ind, fitnesses):
-                ind.fitness.values = fit
-
-            # This is just to assign the crowding distance to the individuals
-            # no actual selection is done
-            pop = toolbox.select(pop, len(pop))
-
-            record = stats.compile(pop)
-            logbook.record(gen=0, evals=len(invalid_ind), **record)
-            print(logbook.stream)
-
-        else:
-            (starting_frames_ts,speed_dict,color_dict,weather_dict) = generate_values(bool_dict, nbr_car_tracks, nbr_bike_tracks, nbr_walker_tracks, nbr_vel_points, v_max, v_max_b, v_max_w, nbr_frames_ts, weather_dict, speed_dict, track_dict, color_dict, starting_frames_ts, max_frames, pop)
-            starting_frames = np.rint(starting_frames_ts*delta_timestamps/delta_seconds) #At what frames to spawn actors.
-
-            #Save input parameters.
-            param_save = f"input_params_temp/batch_4.txt"
-            os.makedirs(os.path.dirname(param_save), exist_ok=False)
-            with open(param_save, 'a') as f:
-                str1 = f"{gen_nbr}:   "
-                for car in color_dict:
-                    str1 += 'r: ' + str(color_dict[car][0]) + "   "
-                    str1 += 'g: ' + str(color_dict[car][1]) + "   "
-                    str1 += 'b: ' + str(color_dict[car][2]) + "   "
-                    
-
-                str1 += 'az: ' + str(np.round(weather_dict['sun_azimuth_angle'],2)) + "   "
-                str1 += 'cl: ' + str(np.round(weather_dict['cloudiness'],2)) + "\n"
-
-                f.writelines([str1])
-            #Save input parameters.
-            
-            weather = set_weather_params(weather_dict)
-           
-            world.set_weather(weather)
-
-            run_simulation(gen_nbr, total_nbr_tracks, coord_dict, speed_dict, delta_seconds, delta_timestamps, starting_frames, object_classes, color_dict, world, sensor_list, sensor_queue, blueprint_library)
-
-       #Save as video
-        image_folder = 'images'
-
-        for i in range(2):
-            images = [img for img in os.listdir(image_folder) if img.endswith(".jpg") and img.startswith(f"{i}")]
-            if i == 0:
-                video_name = f'output_scenario/scenario_{gen_nbr}_left.mp4' 
-            else:
-                video_name = f'output_scenario/scenario_{gen_nbr}_right.mp4'
-            frame = cv2.imread(os.path.join(image_folder, images[0]))
-
-            try:
-                height, width, layers = frame.shape
-
-            except AttributeError:
-                print(os.getcwd())
+                # This is just to assign the crowding distance to the individuals
+                # no actual selection is done
+                pop = toolbox.select(pop, len(pop))
                 
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            
-            video = cv2.VideoWriter(video_name, fourcc, 20, (width,height))
-            count = 0
+                record = stats.compile(pop)
+                #logbook.record(gen=0, evals=len(invalid_ind), **record)
+                #print(logbook.stream)
 
-            for image in images:
-                video.write(cv2.imread(os.path.join(image_folder, image)))
-                print(count)
-                count += 1
+            else:
+                #In the nsga-ii algorithm, we need the parameter values from two generations back when doing selection.
+                last_gen_temp = get_param_values(batch_idx, pop_size, delta_timestamps, current_gen-1, total_nbr_tracks, gt_path)
+                toolbox.register("attr_float_last_gen", fetch_values, last_gen_temp) 
+                toolbox.register("individual_last_gen", tools.initIterate, creator.Individual, toolbox.attr_float_last_gen)
+                toolbox.register("population_last_gen", tools.initRepeat, list, toolbox.individual_last_gen)
 
-            cv2.destroyAllWindows()
-            video.release()
+                (avg_errors_last_gen, dist_results, speed_results, perc_misclass, step_perc) = compute_errors(batch_idx, total_nbr_tracks, pop_size, current_gen-1, False, op_path, gt_path)
+                toolbox.register("evaluate_last_gen", fetch_errors, avg_errors_last_gen)
+                
+                pop = toolbox.population_last_gen(n=pop_size)
+                offspring = toolbox.population(n=pop_size)
 
-        shutil.rmtree(image_folder)
-        #Save as video
-    
+                invalid_ind_pop = [ind for ind in pop if not ind.fitness.valid]
+                fitnesses_pop = toolbox.map(toolbox.evaluate_last_gen, invalid_ind_pop)
+                for ind, fit in zip(invalid_ind_pop, fitnesses_pop):
+                    ind.fitness.values = fit
+                    
+                invalid_ind_offspr = [ind for ind in offspring if not ind.fitness.valid]
+                fitnesses_offspr = toolbox.map(toolbox.evaluate, invalid_ind_offspr)
+                for ind, fit in zip(invalid_ind_offspr, fitnesses_offspr):
+                    ind.fitness.values = fit
 
+                print("last gen population hypervolume is %f" % hypervolume(offspring))
+                # Select the next generation population among pop and offspring:
+                pop = toolbox.select(pop + offspring, pop_size)
+                print("next gen population hypervolume is %f" % hypervolume(pop))
+                record = stats.compile(pop)
+                #logbook.record(gen=current_gen, evals=len(invalid_ind), **record)
+                #print(logbook.stream)
+
+
+               
+        world.tick() #Tick to spawn in the cameras.
         print('Starting the loop...')
        
-        for gen_nbr in range(1,nbr_generations):
+        for gen_nbr in range(nbr_generations):
             if model == 'nsga2':
                 # Vary the population
                 offspring = tools.selTournamentDCD(pop, len(pop))
                 offspring = [toolbox.clone(ind) for ind in offspring] #Need this since otherwise we make changes to the individuals in pop.
-
+                ctr = 0
                 for ind1, ind2 in zip(offspring[::2], offspring[1::2]):
-                    if random.random() <= crosspver_prob:
+                    if random.random() <= crossover_prob:
                         toolbox.mate(ind1, ind2)
-
                     toolbox.mutate(ind1)
                     toolbox.mutate(ind2)
                     del ind1.fitness.values, ind2.fitness.values
+                    ctr += 1
 
+                ind_nbr = 0
                 for ind in offspring:
                     (starting_frames_ts,speed_dict,color_dict,weather_dict) = generate_values(bool_dict, nbr_car_tracks, nbr_bike_tracks, nbr_walker_tracks, nbr_vel_points, v_max, v_max_b, v_max_w, nbr_frames_ts, weather_dict, speed_dict, track_dict, color_dict, starting_frames_ts, max_frames, ind)
-                    starting_frames = np.rint(starting_frames_ts*delta_timestamps/delta_seconds) #At what frames to spawn actors.
-                       
+                    #generate_values fetches values from ind and puts them into dicts
+                    starting_frames = np.rint(starting_frames_ts*delta_timestamps/delta_seconds) #Change from long to short frames
+
+                    save_params(batch_idx, ind_nbr, color_dict, weather_dict) #Save ground truth colors and weathers. The positions and speeds are saved later
+    
                     weather = set_weather_params(weather_dict)
                     world.set_weather(weather)
 
-                    run_simulation(gen_nbr, total_nbr_tracks, coord_dict, speed_dict, delta_seconds, delta_timestamps, starting_frames, object_classes, color_dict, world, sensor_list, sensor_queue, blueprint_library)
+                    run_simulation(ind_nbr, batch_idx, total_nbr_tracks, coord_dict, speed_dict, delta_seconds, delta_timestamps, starting_frames, object_classes, color_dict, world, sensor_list, sensor_queue, blueprint_library)
 
-                # Evaluate the individuals with an invalid fitness
-                invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
-                fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
-                for ind, fit in zip(invalid_ind, fitnesses):
-                    ind.fitness.values = fit
-           
-                # Select the next generation population
-                pop = toolbox.select(pop + offspring, pop_size)
-                record = stats.compile(pop)
-                logbook.record(gen=gen, evals=len(invalid_ind), **record)
-                print(logbook.stream)
-
-            else:
-                (starting_frames_ts,speed_dict,color_dict,weather_dict) = generate_values(bool_dict, nbr_car_tracks, nbr_bike_tracks, nbr_walker_tracks, nbr_vel_points, v_max, v_max_b, v_max_w, nbr_frames_ts, weather_dict, speed_dict, track_dict, color_dict, starting_frames_ts, max_frames, pop)
-                starting_frames = np.rint(starting_frames_ts*delta_timestamps/delta_seconds) #At what frames to spawn actors.
-
-                with open(param_save, 'a') as f:
-                    str1 = f"{gen_nbr}:   "
-                    for car in color_dict:
-                        str1 += 'r: ' + str(color_dict[car][0]) + "   "
-                        str1 += 'g: ' + str(color_dict[car][1]) + "   "
-                        str1 += 'b: ' + str(color_dict[car][2]) + "   "
-
-                    str1 += 'az: ' + str(np.round(weather_dict['sun_azimuth_angle'],2)) + "   "
-                    str1 += 'cl: ' + str(np.round(weather_dict['cloudiness'],2)) + "\n"
-
-                    f.writelines([str1])
-                weather = set_weather_params(weather_dict)
-                world.set_weather(weather)
-
-                run_simulation(gen_nbr, total_nbr_tracks, coord_dict, speed_dict, delta_seconds, delta_timestamps, starting_frames, object_classes, color_dict, world, sensor_list, sensor_queue, blueprint_library)
-
-            #Save as video
-            image_folder = 'images'
-            for i in range(2):
-                images = [img for img in os.listdir(image_folder) if img.endswith(".jpg") and img.startswith(f"{i}")]
-                if i == 0:
-                    video_name = f'output_scenario/scenario_{gen_nbr}left.mp4'
-                else:
-                    video_name = f'output_scenario/scenario_{gen_nbr}right.mp4'
-                frame = cv2.imread(os.path.join(image_folder, images[0]))
-
-                try:
-                    height, width, layers = frame.shape
-                except AttributeError:
-                    print(os.getcwd())
+                    save_video(batch_idx, ind_nbr)
                     
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                
-                video = cv2.VideoWriter(video_name, fourcc, 20, (width,height))
-                count = 0
+                    ind_nbr += 1
 
-                for image in images:
-                    video.write(cv2.imread(os.path.join(image_folder, image)))
-                    print(count)
-                    count += 1
-                
-                cv2.destroyAllWindows()
-                video.release()
 
-            shutil.rmtree(image_folder)
-            #Save as video
-                     
+            else: #The baseline model
+                for ind_nbr in range(pop_size):
+                    (starting_frames_ts,speed_dict,color_dict,weather_dict) = generate_values(bool_dict, nbr_car_tracks, nbr_bike_tracks, nbr_walker_tracks, nbr_vel_points, v_max, v_max_b, v_max_w, nbr_frames_ts, weather_dict, speed_dict, track_dict, color_dict, starting_frames_ts, max_frames, pop)
+                    #Since len(ind)==0, generate_values generates random values
+                    starting_frames = np.rint(starting_frames_ts*delta_timestamps/delta_seconds) #Change from long to short frames
+
+                    save_params(batch_idx, ind_nbr, color_dict, weather_dict)
+
+                    weather = set_weather_params(weather_dict)
+                    world.set_weather(weather)
+
+                    run_simulation(ind_nbr, batch_idx, total_nbr_tracks, coord_dict, speed_dict, delta_seconds, delta_timestamps, starting_frames, object_classes, color_dict, world, sensor_list, sensor_queue, blueprint_library)
+                    save_video(batch_idx, ind_nbr)
+
+
         print('Done with loop')
+
+    
     finally:
         world.apply_settings(original_settings)
         for s in sensor_list:
             s.destroy()
        
-
-
+    
+        
 
 if __name__ == '__main__':
     try:
@@ -482,3 +541,4 @@ if __name__ == '__main__':
         pass
     finally:
         print('\ndone.')
+
