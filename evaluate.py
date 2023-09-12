@@ -682,7 +682,7 @@ def main():
     """
 
     
-    
+    """
     plt.figure()
     #plt.subplot(411)
     plt.plot(az_values,error_values_dist_all[:,3],'.')
@@ -700,6 +700,7 @@ def main():
     plt.ylabel('distance errors (m)')
     plt.title('Sun azimuth and distance errors: Walker trajectory 2')
     plt.show()
+    """
     
     #plt.plot(az_values,error_values_dist_all[:,6],'.')
     #plt.xlabel('altitude values')
@@ -949,13 +950,14 @@ def main():
     plt.ylabel('distance errors')
     plt.subplot(313)
     """
-    """
+    
     plt.plot(az_values_bikes,error_values_perc_bike[:,2],'.')
     plt.title('Sun azimuth and misclassifications: Bicycle trajectory 2')
     plt.xlabel('azimuth values (degrees)')
-    plt.ylabel('distance errors (m)')
+    plt.ylabel('classification errors')
     plt.show()
-    
+
+    """
     plt.figure()
     plt.subplot(311)
     plt.plot(cl_values_bikes,error_values_perc_bike[:,0],'.')
@@ -966,13 +968,14 @@ def main():
     plt.xlabel('altitude values')
     plt.ylabel('distance errors')
     plt.subplot(313)
+    """
     
     plt.plot(cl_values_bikes,error_values_perc_bike[:,2],'.')
     plt.title('Cloudiness and misclassifications: Bicycle trajectory 2')
     plt.xlabel('cloudiness values')
-    plt.ylabel('distance errors (m)')
+    plt.ylabel('classification errors')
     plt.show()
-    """
+    
     
     """
     plt.figure()

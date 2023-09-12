@@ -1,15 +1,15 @@
 import numpy as np
-#import carla
+import carla
 import random
 import time
 from queue import Queue
 from queue import Empty
 import os
-#import cv2
-#import shutil
+import cv2
+import shutil
 import csv
 
-#import pandas as pd
+import pandas as pd
 
 def save_params(batch_idx, ind_nbr, color_dict, weather_dict):
     """
@@ -73,7 +73,7 @@ def save_video(batch_idx, ind_nbr):
     shutil.rmtree(image_folder)
 
 
-def compute_errors(batch, nbr_actors, pop_size, current_gen, get_positions = False, path_op, path_gt):
+def compute_errors(batch, nbr_actors, pop_size, current_gen, get_positions, path_op, path_gt):
     """
     Computes the distance, speed and classification errors for each individual/scenario in the population.
     Returns error_values_dist, error_values_speed and error_values_perc, which contain the respective error
